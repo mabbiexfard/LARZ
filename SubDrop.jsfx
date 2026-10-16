@@ -1,0 +1,175 @@
+desc:Sub Drop (one-shot sine, editable pitch + amp envelope)
+in_pin:none
+out_pin:Left
+out_pin:Right
+
+slider1:10<0,500,1>Attack (ms)
+slider2:400<1,4000,1>Decay (ms)
+slider3:0.7<0,1,0.01>Sustain level
+slider4:500<0,4000,1>Hold (ms)
+slider5:600<1,4000,1>Release (ms)
+slider6:0<0,1,1{Off,On}>Key track
+slider7:36<0,127,1>Key track root note
+slider8:0<0,360,1>Start phase (deg)
+slider9:-6<-48,12,0.1>Gain (dB)
+slider10:2000<500,8000,10>View length (ms)
+
+@init
+// memory map: pitch nodes x(ms) @0, y(Hz) @16 | amp node pixels @32,@36 | voices @100 (6 each)
+PX=0; PY=16; AX=32; AY=36; VB=100; NV=8;
+!pn ? (
+  pn=4;
+  PX[0]=0;   PY[0]=400;
+  PX[1]=40;  PY[1]=100;
+  PX[2]=250; PY[2]=55;
+  PX[3]=1500;PY[3]=40;
+);
+
+@serialize
+file_var(0,pn);
+file_mem(0,PX,32);
+
+@block
+na=slider1*0.001*srate;
+nd=max(slider2,1)*0.001*srate;
+sl=slider3;
+nh=slider4*0.001*srate;
+nr=max(slider5,1)*0.001*srate;
+nad=na+nd; nadh=nad+nh; ntot=nadh+nr;
+gn=exp(slider9*0.1151292546);
+
+@sample
+// note-on only: note length ignored, envelope always plays through (one-shot)
+// ponytail: round-robin voices, oldest gets cut (click) when >8 overlap
+while (midirecv(mo,m1,m2,m3)) (
+  (m1&0xF0)==0x90 && m3>0 ? (
+    rr=(rr+1)%NV; v=VB+rr*6;
+    v[0]=1; v[1]=slider8*$pi/180; v[2]=0;
+    v[3]=slider6 ? 2^((m2-slider7)/12) : 1;
+    v[4]=m3/127;
+  );
+);
+
+out=0; vi=0;
+loop(NV,
+  v=VB+vi*6; vi+=1;
+  v[0] ? (
+    vt=v[2];
+    vt<na ? (ve=vt/na) :
+    vt<nad ? (ve=1-(1-sl)*(vt-na)/nd) :
+    vt<nadh ? (ve=sl) :
+    vt<ntot ? (ve=sl*(1-(vt-nadh)/nr)) :
+    (v[0]=0; ve=0);
+
+    tm=vt*1000/srate; vk=0;
+    while (vk<pn-2 && tm>=PX[vk+1]) ( vk+=1; );
+    x0=PX[vk]; x1=PX[vk+1];
+    vx=tm>=x1 ? 1 : (tm-x0)/max(x1-x0,0.001);
+    vf=PY[vk]*(PY[vk+1]/PY[vk])^vx*v[3];   // log-interpolated Hz
+
+    v[1]+=2*$pi*vf/srate;
+    v[1]>2*$pi ? v[1]-=2*$pi;
+    out+=sin(v[1])*ve*v[4];
+    v[2]+=1;
+  );
+);
+spl0=spl1=out*gn;
+
+@gfx 640 380
+gl=40; gw=gfx_w-gl-14; phh=floor((gfx_h-80)/2); y1=24; y2=y1+phh+34;
+kx=gw/slider10; lg=log(100);   // pitch axis: 20 Hz .. 2 kHz, log
+
+// amp node pixel positions: (A,1) (A+D,S) (A+D+H,S) (T,0)
+am1=slider1; am2=am1+slider2; am3=am2+slider4; am4=am3+slider5;
+AX[0]=gl+am1*kx; AY[0]=y2;
+AX[1]=gl+am2*kx; AY[1]=y2+phh*(1-slider3);
+AX[2]=gl+am3*kx; AY[2]=y2+phh*(1-slider3);
+AX[3]=gl+am4*kx; AY[3]=y2+phh;
+
+// ---- mouse ----
+mx=mouse_x; my=mouse_y; cap=mouse_cap&1;
+cap && !lcap ? (
+  now=time_precise(); dbl=(now-lt)<0.3; lt=now;
+  drag=0;
+  i=0; loop(pn,
+    dx=mx-(gl+PX[i]*kx); dy=my-(y1+phh*(1-log(PY[i]/20)/lg));
+    dx*dx+dy*dy<100 ? drag=i+1;
+    i+=1;
+  );
+  !drag ? (
+    i=0; loop(4,
+      dx=mx-AX[i]; dy=my-AY[i];
+      dx*dx+dy*dy<100 ? drag=101+i;
+      i+=1;
+    );
+  );
+  // double-click node = delete, double-click empty pitch area = add
+  dbl && drag>1 && drag<100 && pn>2 ? (
+    j=drag-1; while (j<pn-1) ( PX[j]=PX[j+1]; PY[j]=PY[j+1]; j+=1; );
+    pn-=1; drag=0;
+  );
+  dbl && !drag && pn<16 && mx>gl && mx<gl+gw && my>y1 && my<y1+phh ? (
+    ms=(mx-gl)/kx; i=1; while (i<pn && PX[i]<ms) ( i+=1; );
+    j=pn; while (j>i) ( PX[j]=PX[j-1]; PY[j]=PY[j-1]; j-=1; );
+    PX[i]=ms; PY[i]=min(max(20*exp(lg*(1-(my-y1)/phh)),20),2000);
+    pn+=1; drag=i+1;
+  );
+);
+!cap ? drag=0;
+cap && drag ? (
+  ms=min(max((mx-gl)/kx,0),slider10);
+  drag<100 ? (
+    i=drag-1;
+    i>0 ? PX[i]=min(max(ms,PX[i-1]+1), i<pn-1 ? PX[i+1]-1 : slider10);
+    PY[i]=min(max(20*exp(lg*(1-(my-y1)/phh)),20),2000);
+  ) : (
+    k=drag-101;
+    lvl=min(max(1-(my-y2)/phh,0),1);
+    k==0 ? slider1=min(max(ms,0),500);
+    k==1 ? (slider2=min(max(ms-slider1,1),4000); slider3=lvl);
+    k==2 ? (slider4=min(max(ms-slider1-slider2,0),4000); slider3=lvl);
+    k==3 ? slider5=min(max(ms-slider1-slider2-slider4,1),4000);
+    sliderchange(31);
+  );
+);
+lcap=cap;
+
+// ---- draw ----
+gfx_set(0.08,0.08,0.1,1); gfx_rect(0,0,gfx_w,gfx_h);
+gfx_set(0.14,0.14,0.18,1); gfx_rect(gl,y1,gw,phh); gfx_rect(gl,y2,gw,phh);
+gfx_set(1,1,1,0.08);
+gt=0; while (gt<=slider10) ( gx=gl+gt*kx; gfx_line(gx,y1,gx,y1+phh); gfx_line(gx,y2,gx,y2+phh); gt+=250; );
+fr=25; loop(7,
+  gy=y1+phh*(1-log(fr/20)/lg);
+  gfx_line(gl,gy,gl+gw,gy);
+  gfx_x=2; gfx_y=gy-4; gfx_drawnumber(fr,0);
+  fr*=2;
+);
+gfx_set(1,1,1,0.8);
+gfx_x=gl; gfx_y=6; gfx_drawstr("PITCH ENV (Hz)  drag nodes | dbl-click: add / remove");
+gfx_x=gl; gfx_y=y2-18; gfx_drawstr("AMP ENV  A  D/S  H/S  R  | total ms: ");
+gfx_drawnumber(slider1+slider2+slider4+slider5,0);
+
+// pitch curve
+gfx_set(0.2,0.8,1,1);
+i=0; loop(pn-1,
+  gfx_line(gl+PX[i]*kx, y1+phh*(1-log(PY[i]/20)/lg), gl+PX[i+1]*kx, y1+phh*(1-log(PY[i+1]/20)/lg));
+  i+=1;
+);
+yl=y1+phh*(1-log(PY[pn-1]/20)/lg);
+gfx_line(gl+PX[pn-1]*kx,yl,gl+gw,yl);
+i=0; loop(pn,
+  px_=gl+PX[i]*kx; py_=y1+phh*(1-log(PY[i]/20)/lg);
+  gfx_set(1,1,1,1); gfx_circle(px_,py_,5,1,1);
+  gfx_set(1,1,1,0.7); gfx_x=px_+8; gfx_y=py_-12; gfx_drawnumber(PY[i],0);
+  i+=1;
+);
+
+// amp curve
+gfx_set(1,0.6,0.2,1);
+gfx_line(gl,y2+phh,AX[0],AY[0]);
+i=0; loop(3, gfx_line(AX[i],AY[i],AX[i+1],AY[i+1]); i+=1; );
+i=0; loop(4, gfx_set(1,1,1,1); gfx_circle(AX[i],AY[i],5,1,1); i+=1; );
+
+// total-length marker
+gfx_set(1,0.6,0.2,0.4); gfx_line(AX[3],y1,AX[3],y2+phh);

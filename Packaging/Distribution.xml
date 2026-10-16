@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+  <title>LARZ 1.0.6</title>
+  <options customize="always" require-scripts="false"/>
+  <choices-outline>
+    <line choice="choice-au"/>
+    <line choice="choice-vst3"/>
+  </choices-outline>
+  <choice id="choice-au" title="Audio Unit (AU)" description="Install the LARZ AU instrument." selected="selected" enabled="enabled">
+    <pkg-ref id="com.mabbiefx.larz.au"/>
+  </choice>
+  <choice id="choice-vst3" title="VST3" description="Install the LARZ VST3 instrument." selected="selected" enabled="enabled">
+    <pkg-ref id="com.mabbiefx.larz.vst3"/>
+  </choice>
+  <pkg-ref id="com.mabbiefx.larz.au" version="1.0.6" onConclusion="none">LARZ-AU-1.0.6.pkg</pkg-ref>
+  <pkg-ref id="com.mabbiefx.larz.vst3" version="1.0.6" onConclusion="none">LARZ-VST3-1.0.6.pkg</pkg-ref>
+</installer-gui-script>

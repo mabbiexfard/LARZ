@@ -1,0 +1,6 @@
+.DS_Store
+._*
+*.xcuserstate
+xcuserdata/
+Builds/MacOSX/build/
+Builds/MacOSX/Build/
